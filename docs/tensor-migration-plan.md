@@ -268,11 +268,11 @@ class Tensor {
 
 ### M1. 契约和分支准备
 
-状态：待开始
+状态：完成
 
 任务：
 
-- **T1.1** 创建实现分支：RT `feat/rt-owning-tensor`，Ops `feat/rt-owning-tensor`，LM `feat/adopt-rt-owning-tensor`。Core manifest 只有在组件 commit 存在后才修改。
+- **T1.1** 创建实现分支：RT、Ops、LM、Core、CCL 均使用 `feat/rt-owning-tensor`，不使用额外 worktree。Core manifest 只有在组件 commit 存在后才修改。
 - **T1.2** 为 `Memory`、owning `Tensor`、`Tensor::view()` 和全部 metadata/view 操作增加 API contract 或 compile-only consumer。
 - **T1.3** 确认每个新头文件的 public header 生成和安装规则。
 - **T1.4** 在决策日志中确定 `Memory`、`Tensor`、slice、allocator/context、owner token 的最终命名和语义。
@@ -474,9 +474,9 @@ class Tensor {
 | --- | --- | --- | --- | --- |
 | M0 | Complete | 计划和基线 | `feat/rt-owning-tensor` 上的本文档 | 基线 revision 已记录 |
 | T1.1 | Complete | 分支准备 | 证据日志中的分支 | 本地集成分支已创建 |
-| T1.2 | Ready | API contract 测试 | RT CPU `ctest` 输出 | 尚未迁移 production caller |
-| T1.3 | Ready | Public header/install 规则 | `test_install_consumer` 输出 | 与 generated header 协调 |
-| T1.4 | Ready | API 命名决策 | 决策日志条目 | M2 前解决 |
+| T1.2 | Complete | API contract 测试 | 2026-11-23 证据日志 | 尚未迁移 production caller |
+| T1.3 | Complete | Public header/install 规则 | 2026-11-23 证据日志 | `rt.h` 直接导出安装头 |
+| T1.4 | Complete | API 命名决策 | 决策 D6 | allocator 签名在 M3 前不得再变名 |
 | T2.* | Ready | RT storage/tensor core | M2 退出测试 | M1 后执行 |
 | T3.* | Not started | Allocator bridge | M3 退出测试 | 依赖 M2 |
 | T4.* | Not started | LM 接入 | LM native/Python 测试 | 依赖 M3 |
@@ -490,6 +490,33 @@ class Tensor {
 ## 7. 证据日志
 
 新条目插入在最上方。不得修改旧证据来掩盖失败。
+
+### 2026-11-23 - M1 API 契约和安装验证
+
+- 分支：
+  - RT `feat/rt-owning-tensor`
+  - Ops `feat/rt-owning-tensor`
+  - LM `feat/rt-owning-tensor`
+  - Core `feat/rt-owning-tensor`
+  - CCL `feat/rt-owning-tensor`
+- 完成内容：
+  - 新增公共 `include/infini/rt/memory.h`。
+  - 新增公共 `include/infini/rt/tensor.h`。
+  - `<infini/rt.h>` 导出两个新头文件。
+  - 新增 `tests/test_owning_tensor_contract.cc`，覆盖 `Memory` 生命周期和 owning `Tensor` API 签名。
+  - `tests/install_consumer_smoke.cc` 增加新公共类型的安装消费检查。
+  - 五个仓库统一分支名，均未使用额外 worktree。
+- 命令和结果：
+  - `cmake -S . -B build-migration-cpu -DCMAKE_BUILD_TYPE=Release -DWITH_CPU=ON -DINFINI_RT_BUILD_TESTING=ON`：配置成功。
+  - `cmake --build build-migration-cpu -j8`：构建成功。
+  - 首次完整 `ctest` 中 6 个运行时测试失败，原因是当前 shell 的 `LD_LIBRARY_PATH` 包含 `/home/zhuyue/.infini/lib`，其优先级高于测试 RUNPATH，实际加载了旧安装库。
+  - `LD_LIBRARY_PATH="$PWD/build-migration-cpu/src" ctest ...`：10/10 通过。
+  - `LD_LIBRARY_PATH="$PWD/build-migration-cpu/tests/install_consumer_prefix/lib" ctest ... -R '^(test_install|test_install_consumer)$'`：2/2 通过。
+  - `clang-format 22.1.3` 已格式化新增和修改的 C++ 文件。
+- 当前阻塞：
+  - 无。
+- 下一步：
+  - M2 实现 `TensorImpl`、外部存储构造和纯 view 操作。
 
 ### 2026-11-23 - 文档语言修正
 
@@ -565,6 +592,21 @@ class Tensor {
 - License、法律文本和上游必须英文的接口说明不翻译。
 
 理由：中文文档降低跨 session 和跨机器施工的沟通成本；英文代码注释和标识符保持代码库国际可读性。
+
+### D6. M1 公共命名和所有权语义
+
+日期：2026-11-23
+
+决策：
+
+- 公共 storage 类型命名为 `infini::rt::Memory`。
+- 公共 owning tensor 类型命名为 `infini::rt::Tensor`。
+- 实现类型命名为 `infini::rt::TensorImpl`，只作为 PIMPL 实现细节，不在公共 API 中暴露成员。
+- 切片参数命名为嵌套的 `Tensor::Slice`，字段为 `dim`、`start`、`length`。
+- `Memory` 的 allocation owner 使用 `std::weak_ptr<void>`，RT 只把它作为 opaque identity。
+- M3 allocator 接口命名为 `TensorAllocator`；接口签名在 M3 实现前需保持非 LM、非 Ops 方向。
+
+理由：这些名称与现有 RT 命名空间和 LM 迁移方向一致；`Slice` 避免重新引入 LM 的 `TensorSliceParams` 命名。
 
 ## 9. 风险清单
 

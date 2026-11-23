@@ -8,6 +8,16 @@
 int main() {
   std::vector<float> data{1.0f, 2.0f, 3.0f, 4.0f};
   const infini::rt::Device device{infini::rt::Device::Type::kCpu};
+  const infini::rt::Tensor owning_tensor;
+  std::byte external_storage[2]{};
+  const infini::rt::Memory memory{external_storage, sizeof(external_storage),
+                                  device, nullptr};
+
+  if (owning_tensor || !owning_tensor.empty() || memory.size() != 2 ||
+      memory.device() != device) {
+    return 1;
+  }
+
   const std::vector<std::size_t> shape{2, 2};
   const std::vector<std::ptrdiff_t> default_strides{2, 1};
   const std::vector<std::ptrdiff_t> explicit_strides{1, 2};
