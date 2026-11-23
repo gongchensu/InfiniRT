@@ -1,6 +1,6 @@
-# Core Types
+# 核心类型
 
-Core types are available through:
+核心类型通过以下入口提供：
 
 ```cpp
 #include <infini/rt.h>
@@ -8,7 +8,7 @@ Core types are available through:
 
 ## Device
 
-`infini::rt::Device` identifies a backend type and an index.
+`infini::rt::Device` 表示后端类型和设备编号。
 
 ```cpp
 infini::rt::Device device{infini::rt::Device::Type::kCpu, 0};
@@ -16,7 +16,7 @@ auto type = device.type();
 auto index = device.index();
 ```
 
-Known device types include:
+当前已知设备类型包括：
 
 - `Device::Type::kCpu`
 - `Device::Type::kNvidia`
@@ -27,22 +27,30 @@ Known device types include:
 - `Device::Type::kHygon`
 - `Device::Type::kCambricon`
 - `Device::Type::kAscend`
+- `Device::Type::kThead`
 
 ## DataType
 
-`infini::rt::DataType` describes tensor element types.
-
-Supported values include signed integers, unsigned integers, reduced precision
-floating point, and standard floating point types:
+`infini::rt::DataType` 描述张量元素类型。当前支持：
 
 - `kInt8`, `kInt16`, `kInt32`, `kInt64`
 - `kUInt8`, `kUInt16`, `kUInt32`, `kUInt64`
 - `kFloat16`, `kBFloat16`, `kFloat32`, `kFloat64`
+- `kBool`
+
+`kBool` 与 `kUInt8` 是不同枚举值，并且占用一个字节。
 
 ## TensorView
 
-`infini::rt::TensorView` is a non-owning description of tensor memory that owns
-its shape and stride metadata.
+`infini::rt::TensorView` 是非拥有张量描述，负责保存：
+
+- data pointer;
+- shape;
+- strides;
+- dtype;
+- device。
+
+它不拥有 data pointer 指向的存储。rank 0 到 8 的 shape/stride 元数据内联保存，rank 9 及以上使用 heap fallback。
 
 ```cpp
 std::vector<float> data(16);
@@ -53,26 +61,32 @@ infini::rt::TensorView tensor{
     infini::rt::DataType::kFloat32,
     infini::rt::Device{infini::rt::Device::Type::kCpu, 0},
     std::vector<std::ptrdiff_t>{4, 1}};
-
-auto elements = tensor.numel();
-auto bytes_per_element = tensor.element_size();
-auto contiguous = tensor.IsContiguous();
 ```
 
-`TensorView` stores:
+在 lvalue `TensorView` 上，`shape()` 和 `strides()` 返回轻量 borrowed view。该 view 不能比原 `TensorView` 活得更久；在 rvalue 上调用时会返回拥有式 metadata，避免临时对象悬垂。
 
-- data pointer
-- shape
-- data type
-- device
-- strides
+## Memory
 
-It does not own the tensor data it references. Shape and strides are stored
-inline for ranks 0 through 8; rank 9 and above use owned heap fallback storage.
-Construction from `std::vector` and other compatible contiguous ranges remains
-supported.
+`infini::rt::Memory` 拥有一次 allocation 的释放义务，包含：
 
-On an lvalue `TensorView`, `shape()` and `strides()` return lightweight
-contiguous views by value. Those views borrow metadata from the `TensorView` and
-must not outlive it. Calling the accessors on an rvalue returns owning metadata
-so a view cannot dangle from a temporary.
+- data pointer;
+- 字节数;
+- device;
+- deleter;
+- pinned 标记;
+- graph-pinnable 标记;
+- optional opaque allocation owner。
+
+`allocation_owner` 只表示 allocation identity，不表示 producer 已经完成，也不表示某个 stream 上的写入已经可见。外部存储可以通过 `std::shared_ptr<void>` owner 保活。
+
+## Tensor
+
+`infini::rt::Tensor` 是 shared-ownership 张量值类型。当前公共能力包括：
+
+- `from_blob` 和 `strided_from_blob`;
+- external owner 保活;
+- `view()` 转换为 `TensorView`;
+- `squeeze`, `unsqueeze`, `narrow`, `permute`, `reshape`, `as_strided`;
+- metadata、data pointer 和 storage 生命周期访问。
+
+视图操作共享底层 `Memory`，不复制元素数据。RT 当前不通过 Ops 提供填充或拷贝便捷函数；这些计算语义由上层 runtime 或后续 RT-native primitive 提供。

@@ -285,7 +285,7 @@ class Tensor {
 
 ### M2. RT Storage 和 Tensor Core
 
-状态：未开始
+状态：完成
 
 任务：
 
@@ -477,7 +477,7 @@ class Tensor {
 | T1.2 | Complete | API contract 测试 | 2026-11-23 证据日志 | 尚未迁移 production caller |
 | T1.3 | Complete | Public header/install 规则 | 2026-11-23 证据日志 | `rt.h` 直接导出安装头 |
 | T1.4 | Complete | API 命名决策 | 决策 D6 | allocator 签名在 M3 前不得再变名 |
-| T2.* | Ready | RT storage/tensor core | M2 退出测试 | M1 后执行 |
+| T2.* | Complete | RT storage/tensor core | 2026-11-23 证据日志 | 未引入 allocator 或 Ops 依赖 |
 | T3.* | Not started | Allocator bridge | M3 退出测试 | 依赖 M2 |
 | T4.* | Not started | LM 接入 | LM native/Python 测试 | 依赖 M3 |
 | T5.* | Not started | Copy/fill 边界 | 依赖扫描和 transfer 测试 | 禁止 RT 依赖 Ops |
@@ -490,6 +490,33 @@ class Tensor {
 ## 7. 证据日志
 
 新条目插入在最上方。不得修改旧证据来掩盖失败。
+
+### 2026-11-23 - M2 外部存储和纯视图实现
+
+- 分支：RT `feat/rt-owning-tensor`，前一个提交为 M1 `aacd0c1`。
+- 完成内容：
+  - 在 `src/tensor.cc` 实现 `TensorImpl` PIMPL。
+  - 实现 `from_blob`、带 owner 的 `from_blob`、`strided_from_blob` 和带 owner 的 `strided_from_blob`。
+  - 实现 `view`、`squeeze`、`unsqueeze`、`narrow`、`permute`、`reshape`、`as_strided`。
+  - 实现 dtype、device、shape、strides、data pointer、numel、stride、element size 和 byte size 访问。
+  - 实现 rank 校验、负 stride 拒绝、storage span 校验、offset 校验、numel/stride/byte 溢出检查。
+  - 外部 owner 通过 `Memory::Deleter` 保活；视图共享 `Memory`。
+  - 新增 `tests/test_owning_tensor.cc`，覆盖外部存储、strided storage、视图共享、rank 0、empty tensor、rank 9、broadcast stride、owner 生命周期和错误路径。
+  - `docs/api/core-types.md` 与 `docs/compatibility.md` 改为中文并记录 `Memory` / `Tensor` 公共边界。
+- 命令和结果：
+  - CPU 配置和构建成功；本地 11/11 测试通过。
+  - CPU `test_install` / `test_install_consumer` 2/2 通过。
+  - NVIDIA CUDA 12.9、A100、sm80 配置和构建成功；本地 14/14 测试通过。
+  - NVIDIA `test_install` / `test_install_consumer` 2/2 通过。
+  - `rg -n 'infini/ops|infinilm|infiniccl' include src tests` 无实现代码匹配。
+- 环境注意事项：
+  - 当前 shell 的 `LD_LIBRARY_PATH` 含 `/home/zhuyue/.infini/lib` 时会抢先进旧 RT 库；本地测试需显式指定当前 build 的 `src` 或 install prefix。
+  - NVIDIA 实际 toolkit 在 Spack CUDA 12.9 路径，不是 `/usr/local/cuda`。
+  - RT 的 `generated/include` 与 `generated/src` 位于源码树并在多个 build 目录间共享；从 NVIDIA 切回 CPU 或从 CPU 切到 NVIDIA 时必须重新 configure 对应 build 目录，否则会把上一后端的生成声明带入链接。
+- 当前阻塞：
+  - 无。
+- 下一步：
+  - M3 定义 `TensorAllocator` 并让 LM worker Runtime 适配现有 `ReusableMemoryPool`。
 
 ### 2026-11-23 - M1 API 契约和安装验证
 
@@ -604,6 +631,7 @@ class Tensor {
 - 实现类型命名为 `infini::rt::TensorImpl`，只作为 PIMPL 实现细节，不在公共 API 中暴露成员。
 - 切片参数命名为嵌套的 `Tensor::Slice`，字段为 `dim`、`start`、`length`。
 - `Memory` 的 allocation owner 使用 `std::weak_ptr<void>`，RT 只把它作为 opaque identity。
+- `Tensor::reset()` 只清空 owning handle，不尝试释放或同步底层存储。
 - M3 allocator 接口命名为 `TensorAllocator`；接口签名在 M3 实现前需保持非 LM、非 Ops 方向。
 
 理由：这些名称与现有 RT 命名空间和 LM 迁移方向一致；`Slice` 避免重新引入 LM 的 `TensorSliceParams` 命名。
@@ -621,6 +649,7 @@ class Tensor {
 | ABI 漂移 | 下游 layout/link 失败 | installed-consumer 失败 | public header 每次变化都跑安装测试 |
 | Dtype 漂移 | CCL 或 Python 转换错误 | dtype 不支持或映射错误 | 穷举 mapping，包括 `kBool` |
 | 版本混用 | 无关构建失败 | submodule 状态不干净 | 精确 revision 和干净 prefix |
+| 共享 generated 源码树 | CPU/NVIDIA 交叉构建带入错误后端符号 | CPU 链接出现 CUDA undefined reference | 切换后端时重新 configure 对应 build 目录 |
 | 性能回退 | 正确性后迁移被阻塞 | tensor-heavy benchmark 变慢 | 重构前先做基线对比 |
 
 ## 10. 必需验证命令

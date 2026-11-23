@@ -1,6 +1,9 @@
 #ifndef INFINI_RT_TENSOR_H_
 #define INFINI_RT_TENSOR_H_
 
+#include <infini/rt/generated.h>
+#include <infini/rt/memory.h>
+
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -10,8 +13,6 @@ namespace infini::rt {
 class TensorImpl;
 
 // A shared-ownership tensor over external or allocator-provided storage.
-// Implementation methods are intentionally undeclared in this contract stage;
-// callers must continue using TensorView until M2 lands them.
 class Tensor {
  public:
   using Size = TensorView::Size;
@@ -68,16 +69,22 @@ class Tensor {
   std::size_t nbytes() const;
 
   bool empty() const noexcept { return impl_ == nullptr; }
+  void reset() noexcept { impl_.reset(); }
   std::size_t use_count() const noexcept {
     return impl_ ? impl_.use_count() : 0;
   }
   explicit operator bool() const noexcept { return impl_ != nullptr; }
 
  protected:
+  friend class TensorImpl;
+
   explicit Tensor(std::shared_ptr<TensorImpl> impl) noexcept
       : impl_{std::move(impl)} {}
 
   std::shared_ptr<TensorImpl> impl_;
+
+ private:
+  void RequireImpl() const;
 };
 
 }  // namespace infini::rt

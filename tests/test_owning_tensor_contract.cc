@@ -55,6 +55,12 @@ static_assert(std::is_same_v<decltype(&Tensor::size),
                              Tensor::Size (Tensor::*)(std::size_t) const>);
 static_assert(std::is_same_v<decltype(&Tensor::stride),
                              Tensor::Stride (Tensor::*)(std::size_t) const>);
+static_assert(
+    std::is_same_v<decltype(&Tensor::reset), void (Tensor::*)() noexcept>);
+static_assert(sizeof(Tensor) ==
+              sizeof(std::shared_ptr<::infini::rt::TensorImpl>));
+static_assert(std::is_nothrow_move_constructible_v<Tensor>);
+static_assert(std::is_nothrow_move_assignable_v<Tensor>);
 
 static_assert(std::is_same_v<
               decltype(static_cast<Tensor (*)(void*, const Tensor::Shape&,

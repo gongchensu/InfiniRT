@@ -1,6 +1,8 @@
 #ifndef INFINI_RT_MEMORY_H_
 #define INFINI_RT_MEMORY_H_
 
+#include <infini/rt/generated.h>
+
 #include <cstddef>
 #include <functional>
 #include <memory>
