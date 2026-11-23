@@ -1,41 +1,30 @@
-# Owning Tensor Migration Plan
+# Owning Tensor 迁移施工计划
 
-Status: active construction plan
+状态：施工中
 
-Last updated: 2026-11-23
+最后更新：2026-11-23
 
-Owner: InfiniRT/InfiniLM runtime maintainers
+负责人：InfiniRT / InfiniLM runtime 维护者
 
-This document is the source of truth for migrating the owning tensor and memory
-foundation currently implemented in InfiniLM into InfiniRT. It is deliberately
-written as a handoff document: every work session must update the task ledger,
-evidence log, and decisions before leaving the work in a clean state.
+本文档是把 InfiniLM 中现有的 owning Tensor / Memory 基础迁移到 InfiniRT 的唯一施工依据。它同时是断联交接文档：每次实际开发后，必须同步更新任务台账、证据日志和决策记录，让别人可以只依赖本文档和已记录的 commit 继续工作。
 
-## 1. Purpose and Outcome
+## 1. 目标和最终形态
 
-The end state is:
+迁移完成后的目标形态是：
 
-1. `infini::rt::Device`, `infini::rt::DataType`, shape/stride metadata, and
-   `infini::rt::TensorView` remain the canonical non-owning tensor description.
-2. InfiniRT owns the reusable owning tensor implementation, including storage
-   ownership, metadata validation, view construction, and lifetime semantics.
-3. InfiniOps continues to accept `infini::rt::TensorView` and does not define a
-   competing tensor type.
-4. InfiniLM replaces its private `infinilm::runtime::Tensor` implementation
-   with RT aliases or thin adapters while preserving its Python API, worker
-   runtime rules, graph behavior, and inference semantics.
-5. Memory allocation, stream ordering, graph retention, and external ownership
-   remain explicit and testable across RT, Ops, LM, and CCL.
+1. `infini::rt::Device`、`infini::rt::DataType`、shape/stride 元数据以及 `infini::rt::TensorView` 继续作为统一的非拥有张量描述。
+2. InfiniRT 拥有可复用的 owning Tensor 实现，包括存储所有权、元数据校验、视图构造和生命周期语义。
+3. InfiniOps 继续接收 `infini::rt::TensorView`，不重新定义或复制一套 Tensor 类型。
+4. InfiniLM 用 RT alias 或薄适配层替换私有 `infinilm::runtime::Tensor` 实现，同时保持 Python API、worker Runtime 规则、图行为和推理语义不变。
+5. 内存分配、stream 顺序、graph retention 和外部存储所有权在 RT、Ops、LM、CCL 边界上都有显式定义和测试。
 
-This is a runtime-boundary migration, not an attempt to move operators into RT
-or redesign LM scheduling.
+这是一次 runtime 边界迁移，不是把算子搬进 RT，也不是重做 LM 调度器。
 
-## 2. Current Baseline
+## 2. 当前基线
 
-The plan starts from these coherent revisions. Do not mix them with older local
-checkouts while reproducing baseline evidence.
+计划从下面这组互相匹配的 revision 开始。复现基线证据时，不要把它们和本地旧 checkout 混用。
 
-| Repository | Branch | Revision |
+| 仓库 | 分支 | Revision |
 | --- | --- | --- |
 | InfiniLM | `main` | `ebb081ef129ee8405e2e0863f40441367a40f85c` |
 | InfiniCore | `main` | `64362228212c77422124574af4d7339d728610c7` |
@@ -43,54 +32,46 @@ checkouts while reproducing baseline evidence.
 | InfiniOps | `master` | `f52af91a83f19610b16120ab1be4f5c884c02c1c` |
 | InfiniCCL | `master` | `51cc9db31d58aac21643d72f0f77cf5c9ecfaee5` |
 
-### 2.1 Current Implementation Inventory
+### 2.1 现状盘点
 
-InfiniRT currently provides:
+InfiniRT 当前提供：
 
-- `DataType` in `src/data_type.h`, including distinct `kBool`.
-- `Device` in `src/device.h`.
-- Non-owning `TensorView` in `src/tensor_view.h` and `src/tensor_view.cc`.
-- Inline shape/stride storage in `src/common/shape_strides_storage.h`.
-- `ReusableMemoryPool` in `include/infini/rt/reusable_memory_pool.h` and
-  `src/reusable_memory_pool.cc`.
-- `DeviceGuard` in `include/infini/rt/device_guard.h`.
+- `src/data_type.h` 中的 `DataType`，包含独立的 `kBool`。
+- `src/device.h` 中的 `Device`。
+- `src/tensor_view.h` 和 `src/tensor_view.cc` 中的非拥有 `TensorView`。
+- `src/common/shape_strides_storage.h` 中的 inline shape/stride 存储。
+- `include/infini/rt/reusable_memory_pool.h` 和 `src/reusable_memory_pool.cc` 中的 `ReusableMemoryPool`。
+- `include/infini/rt/device_guard.h` 中的 `DeviceGuard`。
 
-InfiniLM currently provides:
+InfiniLM 当前提供：
 
-- Owning `Tensor` and `TensorImpl` in `csrc/runtime/tensor.hpp`,
-  `csrc/runtime/tensor/tensor.cc`, `csrc/runtime/tensor/view.cc`, and
-  `csrc/runtime/tensor/copy.cc`.
-- `Memory` in `csrc/runtime/memory.hpp` and `csrc/runtime/memory.cc`.
-- Worker `Runtime` in `csrc/runtime/runtime.hpp` and `csrc/runtime/runtime.cc`.
-- Graph tensor capture behavior in `csrc/execution/graph/*`.
-- Python bindings in `csrc/pybind11/runtime/tensor.hpp` and
-  `python/infinilm/_core/tensor.py`.
+- `csrc/runtime/tensor.hpp`、`csrc/runtime/tensor/tensor.cc`、`csrc/runtime/tensor/view.cc`、`csrc/runtime/tensor/copy.cc` 中的 owning `Tensor` 和 `TensorImpl`。
+- `csrc/runtime/memory.hpp` 和 `csrc/runtime/memory.cc` 中的 `Memory`。
+- `csrc/runtime/runtime.hpp` 和 `csrc/runtime/runtime.cc` 中的 worker `Runtime`。
+- `csrc/execution/graph/*` 中的 GraphTensor 和捕获行为。
+- `csrc/pybind11/runtime/tensor.hpp` 和 `python/infinilm/_core/tensor.py` 中的 Python 绑定。
 
-InfiniOps currently aliases:
+InfiniOps 当前只是 alias：
 
-- `infini::ops::Tensor` to `infini::rt::TensorView` in `src/tensor.h`.
-- `DataType`, `Device`, and runtime templates to their RT equivalents.
-- `src/tensor.cc` is obsolete and excluded by CMake. Remove it during this
-  migration rather than reviving it.
+- `src/tensor.h` 中 `infini::ops::Tensor` alias 到 `infini::rt::TensorView`。
+- `DataType`、`Device` 和 runtime 模板均 alias 到 RT 等价类型。
+- `src/tensor.cc` 是旧实现残留，且已被 CMake 排除。迁移中应删除，而不是恢复。
 
-InfiniCCL does not use a tensor object. Its C API accepts raw pointers, element
-counts, `infinicclDataType_t`, communicators, and streams. InfiniLM performs
-dtype conversion at the communication boundary.
+InfiniCCL 不使用 Tensor 对象。它的 C API 接收裸指针、元素数、`infinicclDataType_t`、communicator 和 stream。InfiniLM 在通信边界完成 dtype 转换。
 
-A baseline search of current InfiniLM found approximately:
+对当前 InfiniLM 的基线搜索结果约为：
 
-- 207 source files referencing the LM tensor type.
-- 1,693 lines naming `infinilm::runtime::Tensor` or `runtime::Tensor`.
-- 1,815 common tensor method calls.
+- 207 个源码文件引用 LM Tensor 类型。
+- 1693 行显式出现 `infinilm::runtime::Tensor` 或 `runtime::Tensor`。
+- 1815 处常见 Tensor 方法调用。
 
-Those numbers are why the migration uses a compatibility alias and small,
-verifiable stages. A one-shot replacement is not acceptable.
+这个规模决定了迁移必须使用兼容 alias 和小步验证，不能一次性替换。
 
-## 3. Architecture Rules
+## 3. 架构规则
 
-### 3.1 Dependency Direction
+### 3.1 依赖方向
 
-The only allowed dependency direction is:
+唯一允许的依赖方向是：
 
 ```text
 InfiniLM -> InfiniOps -> InfiniRT
@@ -98,96 +79,108 @@ InfiniLM -> InfiniRT
 InfiniLM -> InfiniCCL
 ```
 
-RT must not include InfiniOps, InfiniLM, or InfiniCCL headers. In particular,
-RT owning tensor code must not call `Fill`, `Copy`, or any other operator.
+RT 不得 include InfiniOps、InfiniLM 或 InfiniCCL 头文件。尤其不允许 RT owning Tensor 代码调用 `Fill`、`Copy` 或任何其他算子。
 
-Some current LM tensor convenience functions call Ops:
+当前 LM Tensor 便捷 API 中有算子依赖：
 
-- `Tensor::ones()` calls `infini::ops::Fill`.
-- `Tensor::contiguous()` and several copy paths call `infini::ops::Copy`.
+- `Tensor::ones()` 调用 `infini::ops::Fill`。
+- `Tensor::contiguous()` 和多个 copy 路径调用 `infini::ops::Copy`。
 
-Those functions cannot move verbatim into RT. They remain LM adapters until RT
-has genuine runtime primitives or the APIs are deliberately relocated with a
-non-Ops implementation.
+这些函数不能原样搬进 RT。它们先留在 LM 适配层，直到 RT 后续有真正 runtime primitive，或另行设计非 Ops 实现。
 
-### 3.2 Owning and Non-Owning Split
+### 3.2 拥有与非拥有边界
 
-`TensorView` remains the non-owning interchange type:
+`TensorView` 继续作为非拥有交换类型：
 
 ```text
 data pointer + shape + strides + dtype + device
 ```
 
-The RT owning tensor is a value type over a shared implementation:
+新的 RT owning Tensor 是基于 shared implementation 的值类型：
 
 ```text
 shared TensorImpl -> metadata + storage/offset
 shared Memory    -> raw bytes + device + deleter + ownership flags
 ```
 
-The owning tensor must expose a cheap `view()` conversion. Ops continues to
-receive views, not owning objects, unless a separate explicit API decision is
-made later.
+Owning Tensor 必须提供低开销的 `view()` 转换。Ops 继续接收 view，不接收 owning 对象；除非未来有单独且显式的 API 决策。
 
-### 3.3 Metadata Representation
+### 3.3 元数据表示
 
-The canonical shape and stride types are the existing `TensorView` vector-like
-types with inline capacity eight. The new owning tensor reuses them rather than
-introducing another `std::vector` metadata layout.
+规范 shape/stride 类型继续使用现有 `TensorView` 的 vector-like 类型，inline capacity 为 8。新的 owning Tensor 复用它们，不引入另一套 `std::vector` 元数据布局。
 
-Migration costs are expected at LM call sites that currently assume:
+LM 现有代码中大量签名假设：
 
 ```cpp
 const std::vector<size_t>&
 ```
 
-The update must preserve range iteration, indexed access, `.size()`, conversion
-to Python sequences, explicit construction from common ranges, and view lifetime
-guarantees. If a staged port needs a temporary conversion boundary, record it
-and remove it before completion.
+迁移时必须保留：
+
+- range 迭代；
+- 下标访问；
+- `.size()`；
+- Python sequence 转换；
+- 从常见 range 显式构造；
+- view accessor 的生命周期语义。
+
+如果阶段性移植需要临时 conversion boundary，必须记录，并在完成前删除。
 
 ### 3.4 Allocation Owner Identity
 
-RT storage must not refer to `infinilm::runtime::Runtime`. RT `Memory` may store
-an opaque owner token such as `std::weak_ptr<void>`. An LM runtime can create
-that token from its `shared_ptr<Runtime>`, and a typed LM helper may recover it
-with `std::static_pointer_cast` only at the LM boundary.
+RT storage 不得引用 `infinilm::runtime::Runtime`。RT `Memory` 可以保存 opaque owner token，例如：
 
-RT treats the token as identity, not as a stream-synchronization or producer
-guarantee. This preserves the existing distinction between allocation identity,
-last-writer completion, stream ownership, and graph retention.
+```cpp
+std::weak_ptr<void> allocation_owner_;
+```
 
-### 3.5 External Storage and Lifetime
+LM Runtime 可以从自己的 `shared_ptr<Runtime>` 创建该 token。只有 LM 边界可以用 `std::static_pointer_cast` 恢复具体类型。
 
-`from_blob` with an optional owner remains required. The owning tensor must keep
-the external owner alive. Safetensors, NumPy, Torch, and graph blob paths depend
-on this behavior.
+RT 只把 token 当作 allocation identity，不把它当作 stream 同步或 producer 完成证明。这样保留现有语义区别：
 
-Never publish a raw pointer beyond a call unless an owner is retained by a
-tensor or graph object, the caller has proven completion, or the API is
-explicitly unsafe and named accordingly.
+- allocation identity；
+- last writer / producer completion；
+- stream ownership；
+- graph retention。
 
-### 3.6 Graph and Stream Safety
+### 3.5 外部存储和生命周期
 
-LM graph capture relies on pinned and graph-pinnable memory flags,
-`ReusableMemoryPool::retain_for_capture`, blob conversion and reinstantiation,
-worker-thread ownership, stream-ordered release, and graph lifetime leases.
+带 optional owner 的 `from_blob` 是必须保留的语义。Owning Tensor 必须保活外部 owner。Safetensors、NumPy、Torch 和 graph blob 路径都依赖它。
 
-Storage flags and opaque identity may move to RT. The LM graph manager and
-worker policy remain in LM during this migration. Any graph behavior change
-needs NVIDIA graph tests before the Core manifest changes.
+除非满足以下条件之一，裸指针不得逃逸出当前调用：
 
-### 3.7 CCL Boundary
+1. Tensor 或 Graph 对象持有 owner；
+2. 调用方已经明确证明外部写入完成；
+3. API 本身显式声明 unsafe，并且命名能表达风险。
 
-CCL remains a C-style raw-pointer API. Do not make CCL depend on RT tensor
-objects in this migration. LM continues to validate contiguous storage,
-matching dtype and runtime device, supported CCL dtype mapping, stream, and
-communicator ownership. Centralize and test the RT-to-CCL dtype conversion.
+### 3.6 Graph 和 Stream 安全
 
-## 4. Target Public Surface
+LM graph capture 当前依赖：
 
-The initial target is an RT surface similar to the following. Exact names may
-change only through a decision-log entry before implementation.
+- pinned / graph-pinnable 内存标记；
+- `ReusableMemoryPool::retain_for_capture`；
+- blob 转换和恢复；
+- worker 线程所有权；
+- stream-ordered release；
+- graph lifetime lease。
+
+Storage 标记和 opaque identity 可以移入 RT。LM GraphManager 和 worker 策略在本次迁移中留在 LM。任何 graph 行为变化都必须先通过 NVIDIA graph 测试，再更新 Core manifest。
+
+### 3.7 CCL 边界
+
+CCL 继续保持 C 风格裸指针 API。本次迁移不让 CCL 依赖 RT Tensor 对象。LM 继续校验：
+
+- contiguous storage；
+- dtype 匹配；
+- runtime device 匹配；
+- CCL dtype 支持；
+- stream 和 communicator 所有权。
+
+RT `DataType` 到 `infinicclDataType_t` 的转换应集中并测试。
+
+## 4. 目标公共接口
+
+初始目标接口如下。实现前如需修改命名，必须先在决策日志记录。
 
 ```cpp
 namespace infini::rt {
@@ -223,7 +216,7 @@ class Tensor {
   static Tensor from_blob(void* data, const Shape& shape,
                           const DataType& dtype, const Device& device,
                           std::shared_ptr<void> owner);
-  static Tensor strided_from_blob(/* same plus strides */);
+  static Tensor strided_from_blob(/* 同上，并带 strides */);
 
   TensorView view() const;
   Tensor squeeze(std::size_t dim) const;
@@ -251,111 +244,97 @@ class Tensor {
 }  // namespace infini::rt
 ```
 
-Allocation factories enter through an explicit allocator/context boundary
-rather than by making RT depend on LM Runtime. Computation convenience APIs
-stay in LM until a separate design adds runtime-native implementations.
+分配工厂通过显式 allocator/context 边界引入，不让 RT 依赖 LM Runtime。计算型便捷 API 先留在 LM，后续再单独设计 runtime-native 实现。
 
-## 5. Construction Stages
+## 5. 施工阶段
 
-Do not start the next stage while the current stage has failed evidence or an
-unresolved blocking decision.
+当前阶段存在失败证据或未决阻塞决策时，不得进入下一阶段。
 
-### M0. Plan and Baseline
+### M0. 计划和基线
 
-Status: complete
+状态：完成
 
-Deliverables:
+交付物：
 
-- This document.
-- The coherent revision table.
-- Baseline inventory and dependency rules.
+- 本文档。
+- 一致 revision 表。
+- 基线盘点和依赖规则。
 
-Exit criteria:
+退出标准：
 
-- The document is committed on the RT migration branch.
-- Participating repositories are clean or contain only documented changes.
-- A reviewer can reproduce the starting tree from the revision table.
+- 文档已提交到 RT 迁移分支。
+- 参与仓库干净，或只包含已记录变更。
+- 审阅者能按 revision 表复现起始状态。
 
-### M1. Contract and Branch Setup
+### M1. 契约和分支准备
 
-Status: ready
+状态：待开始
 
-Tasks:
+任务：
 
-- **T1.1** Create implementation branches: RT `feat/rt-owning-tensor`, Ops
-  `feat/rt-owning-tensor`, LM `feat/adopt-rt-owning-tensor`, and Core manifest
-  changes only after component commits exist.
-- **T1.2** Add an API contract or compile-only consumer for `Memory`, owning
-  `Tensor`, `Tensor::view()`, and all metadata/view operations.
-- **T1.3** Confirm generated public-header installation rules for every new
-  header.
-- **T1.4** Record final names for `Memory`, `Tensor`, slices, allocator/context,
-  and owner-token semantics in the decision log.
+- **T1.1** 创建实现分支：RT `feat/rt-owning-tensor`，Ops `feat/rt-owning-tensor`，LM `feat/adopt-rt-owning-tensor`。Core manifest 只有在组件 commit 存在后才修改。
+- **T1.2** 为 `Memory`、owning `Tensor`、`Tensor::view()` 和全部 metadata/view 操作增加 API contract 或 compile-only consumer。
+- **T1.3** 确认每个新头文件的 public header 生成和安装规则。
+- **T1.4** 在决策日志中确定 `Memory`、`Tensor`、slice、allocator/context、owner token 的最终命名和语义。
 
-Exit criteria:
+退出标准：
 
-- RT CPU build and tests pass with no runtime behavior change beyond the new
-  contract surface.
-- `test_install_consumer` consumes the new headers from an installed prefix.
-- No production caller has yet been migrated.
+- RT CPU 构建和测试通过，除新增 contract surface 外无运行时行为变化。
+- `test_install_consumer` 能从安装前缀消费新头文件。
+- 尚未迁移任何 production caller。
 
-### M2. RT Storage and Tensor Core
+### M2. RT Storage 和 Tensor Core
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T2.1** Move the storage-object concept from LM into RT without LM types.
-- **T2.2** Move metadata validation, storage-span calculation, zero-size
-  handling, negative-stride rejection, and overflow checks.
-- **T2.3** Implement owning tensor construction from external blobs and owners.
-- **T2.4** Implement pure view operations: squeeze, unsqueeze, narrow, permute,
-  reshape/view, and as_strided.
-- **T2.5** Test rank 0, empty tensors, ranks above eight, broadcast strides,
-  custom non-negative strides, overflow, shared storage, owner lifetime, and
-  data-pointer offset.
-- **T2.6** Add ABI/layout checks or static assertions that document object
-  boundaries and prevent accidental inline-field churn.
+- **T2.1** 将 LM 的 storage object 概念移入 RT，且不引入 LM 类型。
+- **T2.2** 迁移 metadata 校验、storage-span 计算、zero-size 处理、负 stride 拒绝和溢出检查。
+- **T2.3** 实现基于外部 blob 和 owner 的 owning Tensor 构造。
+- **T2.4** 实现纯 view 操作：squeeze、unsqueeze、narrow、permute、reshape/view、as_strided。
+- **T2.5** 测试 rank 0、empty tensor、rank 大于 8、broadcast stride、自定义非负 stride、溢出、共享存储、owner 生命周期和 data pointer offset。
+- **T2.6** 增加 ABI/layout 检查或 static assertion，说明对象边界并避免无意的 inline field churn。
 
-Forbidden in this stage: allocating through LM Runtime, calling Ops, changing
-Python behavior, or changing graph capture behavior.
+本阶段禁止：
 
-Exit criteria:
+- 通过 LM Runtime 分配；
+- 调用 Ops；
+- 改 Python 行为；
+- 改 graph capture 行为。
 
-- RT tests cover the complete metadata/view matrix.
-- RT tests pass on CPU and at least one accelerator build.
-- Ownership tests prove deleter execution and external-owner retention.
+退出标准：
+
+- RT 测试覆盖完整 metadata/view 矩阵。
+- CPU 和至少一个加速器构建的 RT 测试通过。
+- ownership 测试证明 deleter 执行和 external owner 保活。
 
 ### M3. Allocator Bridge
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T3.1** Define an RT allocator/context interface for ordinary device memory,
-  parameter memory, and pinned host memory.
-- **T3.2** Keep the interface non-operator-specific and non-LM-specific.
-- **T3.3** Adapt LM worker Runtime as the first implementation, using its
-  existing `ReusableMemoryPool`.
-- **T3.4** Move empty and strided-empty factories to RT through the allocator.
-- **T3.5** Test stream-ordered allocation and release.
-- **T3.6** Decide whether `empty_parameter` remains LM-specific or becomes a
-  general storage policy.
+- **T3.1** 为普通 device memory、parameter memory 和 pinned host memory 定义 RT allocator/context 接口。
+- **T3.2** 接口不得绑定具体算子或 LM 类型。
+- **T3.3** 将 LM worker Runtime 适配为第一个实现，继续使用现有 `ReusableMemoryPool`。
+- **T3.4** 通过 allocator 将 empty 和 strided-empty 工厂迁到 RT。
+- **T3.5** 测试 stream-ordered allocation 和 release。
+- **T3.6** 决定 `empty_parameter` 是保留 LM 专属工厂，还是变成通用 storage policy。
 
-Exit criteria:
+退出标准：
 
-- LM constructs RT owning tensors through the bridge while preserving worker and
-  stream rules.
-- RT does not include LM or Ops headers.
-- CPU and NVIDIA allocation tests pass.
+- LM 能通过 bridge 构造 RT owning Tensor，并保持 worker 和 stream 规则。
+- RT 不 include LM 或 Ops 头文件。
+- CPU 和 NVIDIA allocation 测试通过。
 
-### M4. InfiniLM Compatibility Adoption
+### M4. InfiniLM 兼容接入
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T4.1** Introduce temporary LM aliases:
+- **T4.1** 引入临时 LM alias：
 
   ```cpp
   namespace infinilm::runtime {
@@ -364,240 +343,247 @@ Tasks:
   }
   ```
 
-- **T4.2** Keep LM-specific runtime helpers in a clearly named adapter file.
-- **T4.3** Mechanically update shape/stride signatures and call sites.
-- **T4.4** Update pybind holders, return policies, Python wrapper ownership,
-  NumPy conversion, Torch conversion, and safetensors borrowing.
-- **T4.5** Preserve the public Python API unless a change is explicitly approved.
-- **T4.6** Run native tensor tests, Python runtime tests, checkpoint tests, and
-  model smoke tests.
+- **T4.2** 将 LM 专属 runtime helper 放进命名清晰的适配文件。
+- **T4.3** 机械式更新 shape/stride 签名和调用点。
+- **T4.4** 更新 pybind holder、return policy、Python wrapper ownership、NumPy 转换、Torch 转换和 safetensors 借用。
+- **T4.5** 除非明确批准，保持公共 Python API 不变。
+- **T4.6** 运行 native tensor 测试、Python runtime 测试、checkpoint 测试和模型 smoke 测试。
 
-Exit criteria:
+退出标准：
 
-- LM compiles and runs with RT owning tensors as its only LM tensor alias.
-- Python users see no unintended API regression.
-- No duplicate LM tensor implementation remains active.
+- LM 编译并运行时，RT owning Tensor 是唯一 LM Tensor alias。
+- Python 用户没有非预期 API 回归。
+- LM 不再有活跃的私有 Tensor 实现。
 
-### M5. Copy, Fill, and Compute Boundary
+### M5. Copy、Fill 和计算边界
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T5.1** Move no Ops-backed method into RT.
-- **T5.2** Move current copy, contiguous, and ones behavior into LM adapter
-  functions if class membership must change.
-- **T5.3** Update LM call sites to those adapters.
-- **T5.4** Evaluate which contiguous copies can use RT runtime memcpy directly.
-- **T5.5** Design a separate RT-native fill/copy proposal only after the main
-  migration is stable.
+- **T5.1** 不把任何 Ops-backed 方法移入 RT。
+- **T5.2** 如果必须改变类归属，将当前 copy、contiguous、ones 行为移入 LM adapter 函数。
+- **T5.3** 将 LM 调用点更新到这些 adapter。
+- **T5.4** 评估哪些 contiguous copy 可以直接使用 RT runtime memcpy。
+- **T5.5** 主迁移稳定后，再单独设计 RT-native fill/copy 方案。
 
-Exit criteria:
+退出标准：
 
-- RT contains no Ops dependency.
-- LM transfer semantics and error handling are unchanged on CPU and NVIDIA.
-- Graph-recording refusal rules for prohibited host observation remain intact.
+- RT 没有 Ops 依赖。
+- LM transfer 语义和错误处理在 CPU 与 NVIDIA 上不变。
+- 禁止 host observation 的 graph recording 规则不变。
 
-### M6. Graph Retention and Blob Semantics
+### M6. Graph Retention 和 Blob 语义
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T6.1** Move storage flags and opaque owner identity into RT Memory.
-- **T6.2** Keep `GraphTensor`, graph segmentation, and worker policy in LM.
-- **T6.3** Express blob conversion and reinstantiation through the allocator
-  bridge or a documented LM adapter.
-- **T6.4** Test capture retention, logical ownership count, graph lifetime,
-  replay failure retirement, and cleanup drain.
-- **T6.5** Compare graph execution reports and memory budgets before and after.
+- **T6.1** 将 storage 标记和 opaque owner identity 移入 RT Memory。
+- **T6.2** `GraphTensor`、graph segmentation 和 worker policy 留在 LM。
+- **T6.3** 通过 allocator bridge 或明确记录的 LM adapter 表达 blob 转换和恢复。
+- **T6.4** 测试 capture retention、logical ownership count、graph lifetime、replay failure retirement 和 cleanup drain。
+- **T6.5** 对比迁移前后的 graph execution report 和 memory budget。
 
-Exit criteria:
+退出标准：
 
-- NVIDIA graph capture/replay and eager output equivalence tests pass.
-- No graph outlives allocations on which it depends.
-- No non-capturable allocation is reused during capture.
+- NVIDIA graph capture/replay 和 eager 输出等价测试通过。
+- Graph 不可能比其依赖 allocation 活得更久。
+- capture 中不会重用不可捕获的 allocation。
 
-### M7. InfiniOps Integration
+### M7. InfiniOps 接入
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T7.1** Build Ops against an installed RT migration prefix.
-- **T7.2** Confirm `infini::ops::Tensor` remains an alias to
-  `infini::rt::TensorView`.
-- **T7.3** Remove obsolete `src/tensor.cc` and dead old-class symbols.
-- **T7.4** Audit NineToothed and Torch adapters for shape pointer lifetime and
-  metadata assumptions.
-- **T7.5** Run CPU operator tests and an NVIDIA operator subset.
+- **T7.1** 用安装后的 RT migration prefix 构建 Ops。
+- **T7.2** 确认 `infini::ops::Tensor` 仍 alias 到 `infini::rt::TensorView`。
+- **T7.3** 删除废弃的 `src/tensor.cc` 和旧 class 死符号。
+- **T7.4** 审计 NineToothed 和 Torch adapter 对 shape 指针生命周期及 metadata 表示的假设。
+- **T7.5** 运行 CPU 算子测试和一个 NVIDIA 算子子集。
 
-Exit criteria:
+退出标准：
 
-- Ops compiles and passes tests with no local tensor implementation.
-- Generated wrappers consume canonical RT metadata.
-- No accidental owner copy occurs at the Ops boundary.
+- Ops 无本地 Tensor 实现，仍能编译并通过测试。
+- generated wrapper 消费同一套 RT metadata。
+- Ops 边界不发生无意的 owner 复制。
 
-### M8. CCL, Distributed LM, and Dtype Mapping
+### M8. CCL、分布式 LM 和 Dtype 映射
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T8.1** Centralize RT-to-CCL dtype conversion in one LM helper.
-- **T8.2** Add exhaustive dtype mapping tests, including unsupported `kBool`.
-- **T8.3** Run single-process communication validation and multi-process TP
-  smoke where hardware is available.
-- **T8.4** Validate runtime owner and thread fail-stop behavior before CCL calls.
-- **T8.5** Confirm no non-contiguous or wrong-device tensor reaches CCL.
+- **T8.1** 将 RT 到 CCL 的 dtype 转换集中到一个 LM helper。
+- **T8.2** 增加穷举 dtype mapping 测试，包括不支持的 `kBool`。
+- **T8.3** 在硬件可用时运行单进程通信验证和多进程 TP smoke。
+- **T8.4** 在 CCL 调用前验证 runtime owner 和 thread fail-stop 行为。
+- **T8.5** 确认非 contiguous 或错误 device 的 Tensor 不会进入 CCL。
 
-Exit criteria: all supported mappings are tested, TP inference smoke passes, and
-CCL remains independent of RT object layout.
+退出标准：所有支持的 dtype mapping 有测试，TP 推理 smoke 通过，CCL 不依赖 RT 对象布局。
 
-### M9. End-to-End Validation
+### M9. 端到端验证
 
-Status: not started
+状态：未开始
 
-Minimum matrix:
+最低矩阵：
 
-1. RT CPU full tests and installed-consumer test.
-2. RT NVIDIA full tests, memory-pool graph test, and installed-consumer test.
-3. Ops CPU tests against installed RT.
-4. Ops NVIDIA representative operator tests against installed RT.
-5. LM CPU native tensor and runtime tests.
-6. LM NVIDIA model inference smoke test.
-7. LM graph capture/replay equivalence test.
-8. LM Python API and checkpoint tests.
-9. LM TP/CCL smoke test where available.
-10. Performance comparison against the pre-migration baseline.
+1. RT CPU 全量测试和 installed-consumer 测试。
+2. RT NVIDIA 全量测试、memory-pool graph 测试和 installed-consumer 测试。
+3. Ops 基于安装后 RT 的 CPU 测试。
+4. Ops 基于安装后 RT 的 NVIDIA 代表性算子测试。
+5. LM CPU native tensor/runtime 测试。
+6. LM NVIDIA 模型推理 smoke。
+7. LM graph capture/replay 输出等价测试。
+8. LM Python API 和 checkpoint 测试。
+9. 硬件可用时的 LM TP/CCL smoke。
+10. 与迁移前基线的性能对比。
 
-Record model shape, dtype, batch, input length, output length, hardware, graph
-mode, and comparison method. Local model paths may be omitted.
+必须记录模型 shape、dtype、batch、input length、output length、硬件、graph mode 和结果对比方式。本地模型路径可以省略。
 
-Exit criteria: every required test passes, no forbidden dependency is found,
-performance is within the approved threshold or has an approved follow-up, and
-public docs and compatibility notes are updated.
+退出标准：必需测试全部通过；未发现禁止依赖；性能在批准阈值内或已有批准的后续处理；公共文档和 compatibility 说明已更新。
 
-### M10. Core Pin and Release Handoff
+### M10. Core Pin 和发布交接
 
-Status: not started
+状态：未开始
 
-Tasks:
+任务：
 
-- **T10.1** Update Core submodule gitlinks only after RT and Ops commits exist.
-- **T10.2** Update LM's Core submodule only after the Core manifest commit exists.
-- **T10.3** Rebuild clean prefixes in RT, Ops, CCL, LM order.
-- **T10.4** Run the final matrix on the exact pinned revisions.
-- **T10.5** Mark all ledger entries complete and archive temporary compatibility
-  decisions.
+- **T10.1** 只有 RT 和 Ops commit 存在后，才更新 Core submodule gitlink。
+- **T10.2** 只有 Core manifest commit 存在后，才更新 LM 的 Core submodule。
+- **T10.3** 按 RT、Ops、CCL、LM 顺序使用干净 prefix 重建。
+- **T10.4** 在最终 pinned revision 上重跑完整矩阵。
+- **T10.5** 将任务台账全部置为完成，并归档临时兼容决策。
 
-Exit criteria: a fresh machine reproduces the result using recorded commits,
-submodule status is clean, and no migration branch is needed to build the stack.
+退出标准：新机器能只根据记录的 commit 复现结果；submodule 状态干净；最终 stack 构建不依赖迁移分支。
 
-## 6. Task Ledger
+## 6. 任务台账
 
-Status values are `Ready`, `In progress`, `Blocked`, `Complete`, and `Dropped`.
-Every completed task must have an owner, revision or commit, evidence, and
-remaining work.
+状态取值：
 
-| ID | Status | Scope | Exit evidence | Notes |
+- `Ready`
+- `In progress`
+- `Blocked`
+- `Complete`
+- `Dropped`
+
+每个完成任务必须记录 owner、revision 或 commit、证据和剩余工作。
+
+| ID | 状态 | 范围 | 退出证据 | 备注 |
 | --- | --- | --- | --- | --- |
-| M0 | Complete | Plan and baseline | This document on `feat/rt-owning-tensor` | Baseline revisions recorded |
-| T1.1 | Complete | Branch setup | Branches listed in evidence log | Local integration branches created |
-| T1.2 | Ready | API contract tests | RT CPU `ctest` output | No production caller migration yet |
-| T1.3 | Ready | Public header/install rules | `test_install_consumer` output | Coordinate with generated headers |
-| T1.4 | Ready | API naming decision | Decision-log entry | Resolve before M2 |
-| T2.* | Ready | RT storage and tensor core | M2 exit tests | Do after M1 |
-| T3.* | Not started | Allocator bridge | M3 exit tests | Depends on M2 |
-| T4.* | Not started | LM adoption | LM native and Python tests | Depends on M3 |
-| T5.* | Not started | Copy/fill boundary | Dependency scan and transfer tests | No RT-to-Ops dependency |
-| T6.* | Not started | Graph and blob semantics | NVIDIA graph tests | Highest-risk stage |
-| T7.* | Not started | Ops integration | Ops CPU and NVIDIA tests | Depends on installed RT |
-| T8.* | Not started | CCL, dtype, distributed | Mapping and TP tests | Keep CCL C ABI |
-| T9 | Not started | End-to-end matrix | Complete evidence table | Includes performance |
-| T10 | Not started | Core pin and release | Clean submodule build | Last stage only |
+| M0 | Complete | 计划和基线 | `feat/rt-owning-tensor` 上的本文档 | 基线 revision 已记录 |
+| T1.1 | Complete | 分支准备 | 证据日志中的分支 | 本地集成分支已创建 |
+| T1.2 | Ready | API contract 测试 | RT CPU `ctest` 输出 | 尚未迁移 production caller |
+| T1.3 | Ready | Public header/install 规则 | `test_install_consumer` 输出 | 与 generated header 协调 |
+| T1.4 | Ready | API 命名决策 | 决策日志条目 | M2 前解决 |
+| T2.* | Ready | RT storage/tensor core | M2 退出测试 | M1 后执行 |
+| T3.* | Not started | Allocator bridge | M3 退出测试 | 依赖 M2 |
+| T4.* | Not started | LM 接入 | LM native/Python 测试 | 依赖 M3 |
+| T5.* | Not started | Copy/fill 边界 | 依赖扫描和 transfer 测试 | 禁止 RT 依赖 Ops |
+| T6.* | Not started | Graph/blob 语义 | NVIDIA graph 测试 | 最高风险阶段 |
+| T7.* | Not started | Ops 接入 | Ops CPU/NVIDIA 测试 | 依赖安装后的 RT |
+| T8.* | Not started | CCL、dtype、分布式 | mapping 和 TP 测试 | 保持 CCL C ABI |
+| T9 | Not started | 端到端矩阵 | 完整证据表 | 包含性能 |
+| T10 | Not started | Core pin 和发布 | 干净 submodule 构建 | 只能最后执行 |
 
-## 7. Evidence Log
+## 7. 证据日志
 
-Append new entries at the top. Never edit old evidence to make a failed run look
-successful.
+新条目插入在最上方。不得修改旧证据来掩盖失败。
 
-### 2026-11-23 - Plan initialization
+### 2026-11-23 - 文档语言修正
 
-- Branch: RT `feat/rt-owning-tensor`, based on `c0810cfe`.
-- Related branches:
-  - Ops `feat/rt-owning-tensor`, based on `f52af91a`.
-  - LM `feat/adopt-rt-owning-tensor`, based on `ebb081ef`.
-- Work completed:
-  - Reviewed current RT, LM, Ops, and CCL tensor boundaries.
-  - Recorded dependency, graph, ownership, ABI, and dtype risks.
-  - Created this staged migration plan.
-  - Created local RT, Ops, and LM integration branches.
-- Evidence:
-  - This commit contains the plan and documentation link.
-- Remaining:
-  - Implement M1 contract tests and generated-header rules.
-  - Push or bundle the local branches before handing off to another machine.
+- 分支：RT `feat/rt-owning-tensor`。
+- 完成内容：
+  - 将迁移施工文档改为中文。
+  - 增加项目文档语言约定。
+- 验证：
+  - `git diff --check`。
+- 下一步：
+  - T1.2 API contract 测试。
 
-## 8. Decision Log
+### 2026-11-23 - 计划初始化
 
-Append decisions with new `D#` numbers. A decision changes only when a later
-decision supersedes it.
+- 分支：RT `feat/rt-owning-tensor`，基于 `c0810cfe`。
+- 相关分支：
+  - Ops `feat/rt-owning-tensor`，基于 `f52af91a`。
+  - LM `feat/adopt-rt-owning-tensor`，基于 `ebb081ef`。
+- 完成内容：
+  - 盘点当前 RT、LM、Ops、CCL tensor 边界。
+  - 记录依赖、graph、ownership、ABI、dtype 风险。
+  - 创建分阶段施工计划。
+  - 创建本地 RT、Ops、LM 集成分支。
+- 剩余工作：
+  - 实现 M1 contract 测试和 generated-header 规则。
+  - 交接到其他机器前推送或 bundle 本地分支。
 
-### D1. TensorView remains the Ops interchange type
+## 8. 决策日志
 
-Date: 2026-11-23
+新增决策使用递增 `D#`。后续决策只能显式 supersede 旧决策。
 
-Decision: Ops APIs continue to receive `infini::rt::TensorView`.
+### D1. TensorView 继续作为 Ops 交换类型
 
-Rationale: this preserves operator ABI, avoids ownership ambiguity, and keeps
-the compute boundary narrow.
+日期：2026-11-23
 
-### D2. RT must not depend on Ops or LM
+决策：Ops API 继续接收 `infini::rt::TensorView`。
 
-Date: 2026-11-23
+理由：保持算子 ABI，避免 ownership 歧义，并维持窄计算边界。
 
-Decision: migrated RT source may not include InfiniOps, InfiniLM, or InfiniCCL.
+### D2. RT 不得依赖 Ops 或 LM
 
-Rationale: RT is the bottom runtime layer. LM convenience operations that call
-Ops remain in LM until a separate RT-native primitive design exists.
+日期：2026-11-23
 
-### D3. Canonical metadata is the RT inline-capacity representation
+决策：迁移后的 RT 源码不得 include InfiniOps、InfiniLM 或 InfiniCCL。
 
-Date: 2026-11-23
+理由：RT 是底层 runtime。调用 Ops 的 LM 便捷操作先留在 LM，直到出现独立的 RT-native primitive 设计。
 
-Decision: the owning tensor uses existing RT `TensorView` metadata types.
+### D3. 规范 metadata 使用 RT inline-capacity 表示
 
-Rationale: this avoids two tensor layouts and preserves the metadata allocation
-optimization.
+日期：2026-11-23
 
-### D4. CCL remains a raw-pointer C API
+决策：owning Tensor 使用现有 RT `TensorView` metadata 类型。
 
-Date: 2026-11-23
+理由：避免维护两套 tensor layout，并保留现有 metadata 分配优化。
 
-Decision: do not couple CCL to the RT owning tensor in this migration.
+### D4. CCL 继续使用裸指针 C API
 
-Rationale: storage lifetime and stream correctness already dominate the risk;
-changing the CCL ABI adds unnecessary blast radius.
+日期：2026-11-23
 
-## 9. Risk Register
+决策：本次迁移不让 CCL 耦合 RT owning Tensor。
 
-| Risk | Impact | Early warning | Mitigation |
+理由：storage lifetime 和 stream 正确性已经构成主要风险，改变 CCL ABI 会不必要地扩大影响面。
+
+### D5. 项目文档语言约定
+
+日期：2026-11-23
+
+决策：
+
+- 工程设计、施工计划、交接文档、调研结论以中文为主。
+- 代码注释、标识符、commit message、日志和错误消息使用英文。
+- 面向国际社区的发布文档可以在中文定稿后提供英文翻译或双语版本。
+- License、法律文本和上游必须英文的接口说明不翻译。
+
+理由：中文文档降低跨 session 和跨机器施工的沟通成本；英文代码注释和标识符保持代码库国际可读性。
+
+## 9. 风险清单
+
+| 风险 | 影响 | 早期信号 | 缓解措施 |
 | --- | --- | --- | --- |
-| RT depends on Ops | Architecture collapse | forbidden include scan matches | Dependency gate after every RT stage |
-| One-shot LM replacement | Long unbuildable period | Multiple milestones broken in LM | Compatibility alias and mechanical batches |
-| Shape representation mismatch | Widespread compile failures | Python or vector-reference errors | Contract tests before migration |
-| Dangling external owner | Torch or safetensors crashes | Use-after-free in Python tests | Owner-retention tests and sanitizer where available |
-| Graph lifetime error | Replay corruption or late free | Flaky graph tests | Retain and reinstantiate tests; no capture-time cache miss |
-| Stream-order regression | Silent data races | Intermittent output mismatch | Worker tests and graph/eager comparisons |
-| ABI drift | Downstream layout failures | Installed-consumer failures | Install test for every public-header change |
-| Dtype drift | CCL or Python conversion errors | Unsupported or wrong dtype | Exhaustive mapping tests including `kBool` |
-| Version mixing | Unrelated build failures | Dirty submodule status | Exact revisions and clean-prefix builds |
-| Performance regression | Migration blocked after correctness | Tensor-heavy benchmark slowdown | Baseline comparison before redesign |
+| RT 依赖 Ops | 架构方向失败 | 禁止 include 扫描出现匹配 | 每个 RT 阶段后跑依赖门禁 |
+| 一次性替换 LM | 长时间不可构建 | LM 多个 milestone 同时失败 | 兼容 alias 和机械分批 |
+| Shape 表示不一致 | 大范围编译失败 | Python 或 vector reference 报错 | 迁移前先做 contract 测试 |
+| 外部 owner 悬垂 | Torch 或 safetensors 崩溃 | Python 测试 use-after-free | owner 保活测试，可用 sanitizer |
+| Graph 生命周期错误 | replay 数据损坏或延迟释放 | graph 测试偶发失败 | retain/reinstantiate 测试，capture 中禁止 cache miss |
+| Stream 顺序回归 | 静默数据竞争 | 输出偶发不一致 | worker 测试和 graph/eager 对比 |
+| ABI 漂移 | 下游 layout/link 失败 | installed-consumer 失败 | public header 每次变化都跑安装测试 |
+| Dtype 漂移 | CCL 或 Python 转换错误 | dtype 不支持或映射错误 | 穷举 mapping，包括 `kBool` |
+| 版本混用 | 无关构建失败 | submodule 状态不干净 | 精确 revision 和干净 prefix |
+| 性能回退 | 正确性后迁移被阻塞 | tensor-heavy benchmark 变慢 | 重构前先做基线对比 |
 
-## 10. Required Verification Commands
+## 10. 必需验证命令
 
-Record exact adapted paths and results in the evidence log.
+证据日志必须记录实际适配后的路径和结果，不能只写“通过”。
 
 ### RT CPU
 
@@ -622,16 +608,15 @@ cmake --build build-nvidia -j
 ctest --test-dir build-nvidia --output-on-failure
 ```
 
-### RT dependency-direction audit
+### RT 依赖方向审计
 
 ```bash
 rg -n 'infini/ops|infinilm|infiniccl' include src tests
 ```
 
-Expected result before an explicit documented exception: no implementation-code
-matches.
+在没有显式记录例外前，期望实现代码无匹配。
 
-### Ops against installed RT
+### Ops 基于安装后的 RT
 
 ```bash
 cmake -S . -B build-cpu \
@@ -644,9 +629,9 @@ ctest --test-dir build-cpu --output-on-failure
 cmake --install build-cpu
 ```
 
-### LM native and Python tests
+### LM native 和 Python 测试
 
-Use one coherent installation prefix and matching C++ ABI:
+使用同一个一致安装前缀和匹配的 C++ ABI：
 
 ```bash
 export INFINI_ROOT=/absolute/path/to/coherent-prefix
@@ -655,69 +640,66 @@ xmake build -j _infinilm
 python -m pytest test/runtime test/scripts -q
 ```
 
-Model smoke evidence must additionally record device, model shape, dtype,
-batch, input/output lengths, graph mode, and comparison method.
+模型 smoke 还必须记录 device、模型 shape、dtype、batch、input/output length、graph mode 和结果对比方式。
 
-## 11. Session and Handoff Protocol
+## 11. Session 和交接协议
 
-Every work session must:
+每次开发 session 必须执行：
 
-1. Read this document before changing code.
-2. Confirm repository revisions and `git status` output.
-3. Select one Ready task, or continue exactly one In-progress task.
-4. Record session intent in the evidence log before implementation.
-5. Make small commits that compile independently whenever practical.
-6. Run the milestone's required tests.
-7. Update task status, evidence, decisions, risks, and remaining work.
-8. Leave each repository clean or with a precisely documented branch and state.
-9. Push branches, or create bundles or patches if the network is unavailable.
-10. Mark Blocked only after the blocker is specific and attempted mitigations
-    are recorded.
+1. 修改代码前先阅读本文档。
+2. 确认各仓库 revision 和 `git status`。
+3. 只选择一个 Ready 任务，或继续唯一一个 In progress 任务。
+4. 实现前把本次意图写入证据日志。
+5. 尽量让每个 commit 独立可编译。
+6. 运行当前 milestone 必需测试。
+7. 更新任务状态、证据、决策、风险和剩余工作。
+8. 每个仓库保持干净，或留下明确记录的分支和工作区状态。
+9. 推送分支；网络不可用时生成 bundle 或 patch。
+10. 只有阻塞点具体且已记录尝试过的缓解措施后，才标记 Blocked。
 
-Suggested evidence entry:
+建议证据格式：
 
 ```markdown
-### YYYY-MM-DD - Short session title
+### YYYY-MM-DD - 简短标题
 
-- Branches and revisions:
-  - RT: `<branch>` / `<commit>`
-  - Ops: `<branch>` / `<commit>`
-  - LM: `<branch>` / `<commit>`
-- Work completed:
+- 分支和 revision：
+  - RT：`<branch>` / `<commit>`
+  - Ops：`<branch>` / `<commit>`
+  - LM：`<branch>` / `<commit>`
+- 完成内容：
   - ...
-- Commands and results:
+- 命令和结果：
   - ...
-- Current blockers:
-  - none, or a precise blocker.
-- Next handoff step:
+- 当前阻塞：
+  - 无，或写明具体阻塞。
+- 下一步：
   - ...
 ```
 
-## 12. Stop Conditions
+## 12. 停止条件
 
-Stop and stabilize instead of continuing when:
+出现以下情况时，先停下来稳定，不要继续扩大改动：
 
-1. RT needs an InfiniOps or InfiniLM include to progress.
-2. A graph or transfer test becomes intermittently wrong.
-3. Ownership lifetime cannot be proven for a raw-pointer path.
-4. Public ABI changes are discovered outside compatibility documentation.
-5. A submodule pointer must target an unavailable or uncommitted revision.
-6. LM behavior changes without an explicit test and decision-log entry.
-7. More than one major milestone is simultaneously broken.
+1. RT 需要 include InfiniOps 或 InfiniLM 才能继续。
+2. graph 或 transfer 测试出现偶发错误。
+3. 裸指针路径无法证明 ownership 生命周期。
+4. 发现 compatibility 文档之外的公共 ABI 变化。
+5. submodule 需要指向不存在或未提交的 revision。
+6. LM 行为变化没有对应测试和决策记录。
+7. 多个主要 milestone 同时处于 broken 状态。
 
-## 13. Completion Definition
+## 13. 完成定义
 
-The migration is complete only when:
+只有同时满足以下条件，迁移才算完成：
 
-1. every Section 6 task is Complete or explicitly Dropped with rationale;
-2. RT owns the canonical Memory and Tensor implementation;
-3. Ops exposes no competing tensor implementation;
-4. LM has no active private Tensor or Memory implementation;
-5. RT, Ops, and LM public docs describe the final boundary;
-6. clean-prefix RT, Ops, CCL, and LM builds pass;
-7. CPU and NVIDIA end-to-end tests pass;
-8. graph and TP smoke tests pass where applicable;
-9. performance evidence is recorded;
-10. Core and LM pins target committed, fetchable revisions;
-11. a fresh contributor can continue or audit the work using this file,
-    recorded commits, and standard repository tooling.
+1. 第 6 节所有任务是 Complete，或有明确理由的 Dropped。
+2. RT 拥有规范 Memory/Tensor 实现。
+3. Ops 没有竞争性 Tensor 实现。
+4. LM 没有活跃的私有 Tensor/Memory 实现。
+5. RT、Ops、LM 公共文档描述最终边界。
+6. 干净 prefix 下 RT、Ops、CCL、LM 构建通过。
+7. CPU 和 NVIDIA 端到端测试通过。
+8. 可用硬件下 graph 和 TP smoke 通过。
+9. 性能证据已记录。
+10. Core 和 LM pin 指向可获取的已提交 revision。
+11. 新贡献者能只依靠本文档、已记录 commit 和标准仓库工具继续或审计该工作。
