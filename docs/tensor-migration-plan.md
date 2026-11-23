@@ -493,7 +493,7 @@ class Tensor {
 
 ### 2026-11-23 - M2 外部存储和纯视图实现
 
-- 分支：RT `feat/rt-owning-tensor`，前一个提交为 M1 `aacd0c1`。
+- 分支：RT `feat/rt-owning-tensor`，M2 提交为 `f6a91b5`，前一个提交为 M1 `aacd0c1`。
 - 完成内容：
   - 在 `src/tensor.cc` 实现 `TensorImpl` PIMPL。
   - 实现 `from_blob`、带 owner 的 `from_blob`、`strided_from_blob` 和带 owner 的 `strided_from_blob`。
@@ -513,6 +513,9 @@ class Tensor {
   - 当前 shell 的 `LD_LIBRARY_PATH` 含 `/home/zhuyue/.infini/lib` 时会抢先进旧 RT 库；本地测试需显式指定当前 build 的 `src` 或 install prefix。
   - NVIDIA 实际 toolkit 在 Spack CUDA 12.9 路径，不是 `/usr/local/cuda`。
   - RT 的 `generated/include` 与 `generated/src` 位于源码树并在多个 build 目录间共享；从 NVIDIA 切回 CPU 或从 CPU 切到 NVIDIA 时必须重新 configure 对应 build 目录，否则会把上一后端的生成声明带入链接。
+- 交接状态：
+  - RT `feat/rt-owning-tensor` 已推送到 `origin`。
+  - Ops、LM、Core、CCL 的同名本地分支处于各自基线提交，尚无独立变更。
 - 当前阻塞：
   - 无。
 - 下一步：
