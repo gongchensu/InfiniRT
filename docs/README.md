@@ -20,6 +20,9 @@ Start with these pages:
 - [Runtime API](api/runtime.md): the runtime namespace and backend dispatch
   model.
 - [Core Types](api/core-types.md): `Device`, `DataType`, and `TensorView`.
+- [Owning Tensor Migration Plan](tensor-migration-plan.md): cross-repo task
+  ledger, evidence log, decisions, and handoff protocol for moving InfiniLM's
+  owning tensor foundation into InfiniRT.
 - [Backends](backends.md): supported backend options and API support notes.
 - [Compatibility](compatibility.md): stable API boundary and internal headers.
 - [Contributing](../CONTRIBUTING.md): code style, commit conventions, PR
