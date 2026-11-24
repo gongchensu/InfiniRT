@@ -478,7 +478,7 @@ class Tensor {
 | T1.3 | Complete | Public header/install 规则 | 2026-11-23 证据日志 | `rt.h` 直接导出安装头 |
 | T1.4 | Complete | API 命名决策 | 决策 D6 | allocator 签名在 M3 前不得再变名 |
 | T2.* | Complete | RT storage/tensor core | 2026-11-23 证据日志 | 未引入 allocator 或 Ops 依赖 |
-| T3.* | Not started | Allocator bridge | M3 退出测试 | 依赖 M2 |
+| T3.* | In progress | Allocator bridge | 2026-11-24 证据日志 | RT allocator 与 LM Runtime adapter 已完成；LM Tensor 工厂切换归入 M4 |
 | T4.* | Not started | LM 接入 | LM native/Python 测试 | 依赖 M3 |
 | T5.* | Not started | Copy/fill 边界 | 依赖扫描和 transfer 测试 | 禁止 RT 依赖 Ops |
 | T6.* | Not started | Graph/blob 语义 | NVIDIA graph 测试 | 最高风险阶段 |
@@ -507,8 +507,45 @@ class Tensor {
   - RT 不 include LM / Ops / CCL。
   - 尚未适配 LM Runtime。
 - 下一步：
-  - 在 LM 中先以 RT `Memory` alias 替换私有 Memory。
-  - 让 LM Runtime 实现 `TensorAllocator`，并让 LM empty factory 调用 RT 工厂。
+  - 已由下方 LM Runtime adapter 记录继续。
+
+### 2026-11-24 - M3 LM Runtime adapter
+
+- 分支和提交：
+  - RT `feat/rt-owning-tensor` / `5428970`。
+  - LM `feat/rt-owning-tensor` / `2490e047`。
+- 完成内容：
+  - `infinilm::runtime::Memory` 改为 alias 到 `infini::rt::Memory`。
+  - 删除 LM 私有 `memory.cc` 实现。
+  - LM `TensorImpl::allocation_owner()` 通过 LM 边界 helper 将 opaque owner token 恢复为 typed `Runtime`。
+  - LM `Runtime` 实现 `infini::rt::TensorAllocator`：
+    - `device()`;
+    - `allocation_owner()`;
+    - `allocate()`;
+    - `allocate_exact()`;
+    - `allocate_pinned_host()`。
+  - LM 继续复用现有 `ReusableMemoryPool`、stream 释放规则和 foreign-thread drain 逻辑。
+  - 新增 `test/native/tensor_allocator_test.cpp`，通过 LM Runtime 构造 RT owning Tensor，并验证 owner identity、数据写入和 stream 同步。
+- 命令和结果：
+  - 独立 prefix：`/data/shared/zhuyue/codes/migration-m3-prefix`。
+  - RT CPU+NVIDIA、Ops CPU+NVIDIA、CCL NVIDIA/NCCL 均安装到该 prefix。
+  - LM `_infinilm` 完整构建成功。
+  - LM CPU `test_tensor_allocator` 通过。
+  - `CUDA_VISIBLE_DEVICES=0 INFINILM_TENSOR_ALLOCATOR_DEVICE=nvidia` 下 LM NVIDIA allocator bridge 测试通过。
+  - LM `test_tensor_empty_view` 通过。
+  - LM Python `_core.empty/sync_stream` smoke 通过。
+  - RT CPU+NVIDIA 15/15 本地测试通过。
+  - RT NVIDIA install consumer 2/2 通过。
+- 构建环境记录：
+  - Ops 完整 LM 编译需要 `Copy`、`W4MarlinGemm`、FlashAttention provider 和 Torch `upsample_bicubic2d`。
+  - W4 Marlin 需要 CMake 3.26+；本轮使用 CMake 3.31.6。
+  - Torch provider 链接时需要 `-Wl,-rpath-link,$TORCH_LIB` 和 CUDA toolkit lib64。
+  - xmake 需要显式使用当前 migration prefix，避免回退到 `/home/zhuyue/.infini` 旧库。
+- 当前边界：
+  - RT owning Tensor 已能通过 LM Runtime allocator 构造。
+  - LM 私有 `Tensor` 尚未整体 alias 到 RT Tensor；LM `empty/strided_empty` 仍保留私有实现。
+- 下一步：
+  - M4 引入 `infinilm::runtime::Tensor = infini::rt::Tensor`，逐步移除 LM 私有 TensorImpl。
 
 ### 2026-11-23 - M2 外部存储和纯视图实现
 
@@ -657,6 +694,14 @@ class Tensor {
 - M3 allocator 接口命名为 `TensorAllocator`；接口签名在 M3 实现前需保持非 LM、非 Ops 方向。
 
 理由：这些名称与现有 RT 命名空间和 LM 迁移方向一致；`Slice` 避免重新引入 LM 的 `TensorSliceParams` 命名。
+
+### D7. Parameter storage 是通用 storage policy
+
+日期：2026-11-24
+
+决策：RT allocator 使用 `TensorStorageKind::kParameter` 表示 exact physical storage，而不是 LM 专属概念。
+
+理由：参数物理布局只依赖 allocator 的 exact allocation 语义，可以服务 LM Parameter，也可以服务其他需要禁用复用策略的上层对象。
 
 ## 9. 风险清单
 
