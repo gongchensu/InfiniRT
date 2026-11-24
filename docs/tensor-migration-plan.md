@@ -330,7 +330,7 @@ class Tensor {
 
 ### M4. InfiniLM 兼容接入
 
-状态：未开始
+状态：进行中
 
 任务：
 
@@ -479,7 +479,7 @@ class Tensor {
 | T1.4 | Complete | API 命名决策 | 决策 D6 | allocator 签名在 M3 前不得再变名 |
 | T2.* | Complete | RT storage/tensor core | 2026-11-23 证据日志 | 未引入 allocator 或 Ops 依赖 |
 | T3.* | In progress | Allocator bridge | 2026-11-24 证据日志 | RT allocator 与 LM Runtime adapter 已完成；LM Tensor 工厂切换归入 M4 |
-| T4.* | Not started | LM 接入 | LM native/Python 测试 | 依赖 M3 |
+| T4.* | In progress | LM 接入 | 2026-11-24 证据日志 | dot API 与首批 runtime/execution 迁移完成；alias 未切换 |
 | T5.* | Not started | Copy/fill 边界 | 依赖扫描和 transfer 测试 | 禁止 RT 依赖 Ops |
 | T6.* | Not started | Graph/blob 语义 | NVIDIA graph 测试 | 最高风险阶段 |
 | T7.* | Not started | Ops 接入 | Ops CPU/NVIDIA 测试 | 依赖安装后的 RT |
@@ -490,6 +490,45 @@ class Tensor {
 ## 7. 证据日志
 
 新条目插入在最上方。不得修改旧证据来掩盖失败。
+
+## 7.1 当前变更矩阵
+
+更新时间：2026-11-24。
+
+| 仓库 | 分支 | 基线 | 迁移 commit | 截至所列 commit 的行数 |
+| --- | --- | --- | --- | --- |
+| InfiniRT | `feat/rt-owning-tensor` | `c0810cfe` | `d0a9d2f`, `afb97f2`, `aacd0c1`, `f6a91b5`, `5b41739`, `5428970`, `9aab3b4` | 15 files, +2187/-62 |
+| InfiniLM | `feat/rt-owning-tensor` | `ebb081ef` | `2490e047`, `7175d971` | 16 files, +306/-210 |
+| InfiniOps | `feat/rt-owning-tensor` | `f52af91a` | 无 | 0 files |
+| InfiniCore | `feat/rt-owning-tensor` | `64362228` | 无 | 0 files |
+| InfiniCCL | `feat/rt-owning-tensor` | `51cc9db` | 无 | 0 files |
+
+LM 两个 commit 的独立规模：
+
+- `2490e047 feat: adapt runtime to rt tensor allocator`：9 files, +96/-91。
+- `7175d971 refactor: prepare lm tensor for rt value api`：9 files, +210/-119。
+
+当前只有 RT 与 LM 有源码迁移提交；Ops、Core、CCL 只保留同名分支和固定基线。Core gitlink 必须等 RT/Ops 最终 commit 存在后再更新。
+
+### 2026-11-24 - M4 第一批 value API 准备
+
+- 分支和提交：
+  - LM `feat/rt-owning-tensor` / `7175d971`。
+- 完成内容：
+  - LM `Tensor` 增加 RT 兼容 dot-style API，包括 metadata、data、pure view、copy/transfer、graph blob 和 owner 访问。
+  - 增加 `Tensor::reshape(shape)`；保留旧 `Tensor::view(shape)` 作为过渡 API。
+  - 无参 `Tensor::view()` 返回 `infini::rt::TensorView`，对齐 RT 语义。
+  - `csrc/runtime/io.cc`、`csrc/execution/submit.hpp`、graph 宏、tensor checks、tensor expressions 和 native view 测试从 `operator->` 迁移为 dot access。
+  - shape reshape 调用从 `view(shape)` 改为 `reshape(shape)`。
+- 验证：
+  - LM `_infinilm` 完整构建成功。
+  - `test_tensor_empty_view` 通过。
+  - LM CPU 与 NVIDIA allocator bridge 测试通过。
+  - LM Python `_core.empty/view/sync_stream` smoke 通过。
+- 剩余工作：
+  - LM 全库仍有约两千处 Tensor `operator->` 调用未迁移。
+  - `infinilm::runtime::Tensor` 尚未 alias 到 RT Tensor。
+  - copy/ones 等 Ops-backed 方法仍在 LM wrapper 上，后续需移到 LM adapter/free function。
 
 ### 2026-11-24 - M3 RT allocator 契约
 
@@ -702,6 +741,20 @@ class Tensor {
 决策：RT allocator 使用 `TensorStorageKind::kParameter` 表示 exact physical storage，而不是 LM 专属概念。
 
 理由：参数物理布局只依赖 allocator 的 exact allocation 语义，可以服务 LM Parameter，也可以服务其他需要禁用复用策略的上层对象。
+
+### D8. M4 采用 dot API 先行策略
+
+日期：2026-11-24
+
+决策：
+
+- 先在 LM 私有 `Tensor` wrapper 上补齐 RT Tensor 兼容的 dot-style API。
+- LM 的 shape reshape 统一命名为 `reshape(shape)`。
+- 无参 `view()` 专用于转换为 `TensorView`。
+- 先迁移 runtime、execution、graph 和 native 测试，再扩展到 layers/models。
+- 全部调用点具备 RT 兼容形态后，才把 LM Tensor alias 到 RT Tensor。
+
+理由：LM 当前约有 2170 处 Tensor 方法 `operator->` 调用，直接 alias 会造成长时间不可构建；dot API 先行可以让每个目录独立迁移、独立编译和回滚。
 
 ## 9. 风险清单
 
