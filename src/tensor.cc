@@ -1,4 +1,5 @@
 #include <infini/rt/tensor.h>
+#include <infini/rt/tensor_allocator.h>
 
 #include <algorithm>
 #include <limits>
@@ -426,6 +427,24 @@ Tensor Tensor::strided_from_blob(void* data, const Shape& shape,
   }
   auto memory = std::make_shared<Memory>(static_cast<std::byte*>(data), size,
                                          device, std::move(keep_owner));
+  return Tensor{std::make_shared<TensorImpl>(Shape{shape}, Strides{strides},
+                                             dtype, std::move(memory))};
+}
+
+Tensor Tensor::empty(TensorAllocator& allocator, const Shape& shape,
+                     const DataType& dtype, TensorStorageKind kind) {
+  return strided_empty(allocator, shape, DefaultStrides(shape), dtype, kind);
+}
+
+Tensor Tensor::strided_empty(TensorAllocator& allocator, const Shape& shape,
+                             const Strides& strides, const DataType& dtype,
+                             TensorStorageKind kind) {
+  const std::size_t size =
+      StorageSpanBytes(shape, strides, CheckedElementSize(dtype));
+  auto memory = allocator.allocate(kind, size);
+  if (!memory) {
+    throw std::invalid_argument("tensor allocator returned null storage");
+  }
   return Tensor{std::make_shared<TensorImpl>(Shape{shape}, Strides{strides},
                                              dtype, std::move(memory))};
 }

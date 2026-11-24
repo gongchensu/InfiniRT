@@ -17,6 +17,7 @@
 - `infini::rt::TensorView`
 - `infini::rt::Memory`
 - `infini::rt::Tensor`
+- `infini::rt::TensorAllocator`
 - `infini::rt::set_runtime_device_type`
 - `infini::rt::runtime_device_type`
 - [Runtime API](api/runtime.md) 中的 `infini::rt::runtime` 类型、dispatch 函数和常量。

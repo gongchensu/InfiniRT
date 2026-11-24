@@ -3,18 +3,21 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 int main() {
   std::vector<float> data{1.0f, 2.0f, 3.0f, 4.0f};
   const infini::rt::Device device{infini::rt::Device::Type::kCpu};
   const infini::rt::Tensor owning_tensor;
+  constexpr bool allocator_is_abstract =
+      std::is_abstract_v<infini::rt::TensorAllocator>;
   std::byte external_storage[2]{};
   const infini::rt::Memory memory{external_storage, sizeof(external_storage),
                                   device, nullptr};
 
-  if (owning_tensor || !owning_tensor.empty() || memory.size() != 2 ||
-      memory.device() != device) {
+  if (!allocator_is_abstract || owning_tensor || !owning_tensor.empty() ||
+      memory.size() != 2 || memory.device() != device) {
     return 1;
   }
 

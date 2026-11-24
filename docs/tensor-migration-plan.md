@@ -311,7 +311,7 @@ class Tensor {
 
 ### M3. Allocator Bridge
 
-状态：未开始
+状态：进行中
 
 任务：
 
@@ -490,6 +490,25 @@ class Tensor {
 ## 7. 证据日志
 
 新条目插入在最上方。不得修改旧证据来掩盖失败。
+
+### 2026-11-24 - M3 RT allocator 契约
+
+- 分支：RT `feat/rt-owning-tensor`。
+- 完成内容：
+  - 新增公共 `include/infini/rt/tensor_allocator.h`。
+  - 定义 `TensorStorageKind`：`kGeneral`、`kParameter`、`kPinnedHost`。
+  - 定义抽象 `TensorAllocator` 接口，包含 device、opaque owner、普通分配、exact 分配和 pinned host 分配。
+  - `Tensor::empty` 与 `Tensor::strided_empty` 通过 allocator 构造 RT owning Tensor。
+  - 新增 `tests/test_tensor_allocator.cc`，覆盖三种 storage kind、owner token、分配计数和释放计数。
+- 命令和结果：
+  - RT CPU 本地测试 12/12 通过。
+  - RT CPU `test_install` / `test_install_consumer` 2/2 通过。
+- 当前边界：
+  - RT 不 include LM / Ops / CCL。
+  - 尚未适配 LM Runtime。
+- 下一步：
+  - 在 LM 中先以 RT `Memory` alias 替换私有 Memory。
+  - 让 LM Runtime 实现 `TensorAllocator`，并让 LM empty factory 调用 RT 工厂。
 
 ### 2026-11-23 - M2 外部存储和纯视图实现
 

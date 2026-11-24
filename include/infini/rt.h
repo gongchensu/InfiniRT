@@ -4,5 +4,6 @@
 #include <infini/rt/generated.h>
 #include <infini/rt/memory.h>
 #include <infini/rt/tensor.h>
+#include <infini/rt/tensor_allocator.h>
 
 #endif

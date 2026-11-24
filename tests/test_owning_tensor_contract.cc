@@ -11,6 +11,7 @@ using infini::rt::DataType;
 using infini::rt::Device;
 using infini::rt::Memory;
 using infini::rt::Tensor;
+using infini::rt::TensorAllocator;
 using infini::rt::TensorView;
 
 static_assert(std::is_same_v<Tensor::Shape, TensorView::Shape>);
@@ -61,6 +62,7 @@ static_assert(sizeof(Tensor) ==
               sizeof(std::shared_ptr<::infini::rt::TensorImpl>));
 static_assert(std::is_nothrow_move_constructible_v<Tensor>);
 static_assert(std::is_nothrow_move_assignable_v<Tensor>);
+static_assert(std::is_abstract_v<TensorAllocator>);
 
 static_assert(std::is_same_v<
               decltype(static_cast<Tensor (*)(void*, const Tensor::Shape&,
@@ -82,6 +84,22 @@ static_assert(std::is_same_v<
                   &Tensor::strided_from_blob)),
               Tensor (*)(void*, const Tensor::Shape&, const Tensor::Strides&,
                          const DataType&, const Device&)>);
+static_assert(
+    std::is_same_v<
+        decltype(static_cast<Tensor (*)(
+                     TensorAllocator&, const Tensor::Shape&, const DataType&,
+                     infini::rt::TensorStorageKind)>(&Tensor::empty)),
+        Tensor (*)(TensorAllocator&, const Tensor::Shape&, const DataType&,
+                   infini::rt::TensorStorageKind)>);
+static_assert(
+    std::is_same_v<
+        decltype(static_cast<Tensor (*)(TensorAllocator&, const Tensor::Shape&,
+                                        const Tensor::Strides&, const DataType&,
+                                        infini::rt::TensorStorageKind)>(
+            &Tensor::strided_empty)),
+        Tensor (*)(TensorAllocator&, const Tensor::Shape&,
+                   const Tensor::Strides&, const DataType&,
+                   infini::rt::TensorStorageKind)>);
 
 }  // namespace
 

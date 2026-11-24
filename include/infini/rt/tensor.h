@@ -3,6 +3,7 @@
 
 #include <infini/rt/generated.h>
 #include <infini/rt/memory.h>
+#include <infini/rt/tensor_allocator.h>
 
 #include <cstddef>
 #include <memory>
@@ -45,6 +46,13 @@ class Tensor {
                                   const Strides& strides, const DataType& dtype,
                                   const Device& device,
                                   std::shared_ptr<void> owner);
+  static Tensor empty(TensorAllocator& allocator, const Shape& shape,
+                      const DataType& dtype,
+                      TensorStorageKind kind = TensorStorageKind::kGeneral);
+  static Tensor strided_empty(
+      TensorAllocator& allocator, const Shape& shape, const Strides& strides,
+      const DataType& dtype,
+      TensorStorageKind kind = TensorStorageKind::kGeneral);
 
   TensorView view() const;
   Tensor squeeze(std::size_t dim) const;

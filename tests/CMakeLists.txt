@@ -48,6 +48,7 @@ add_infini_rt_test(test_shape_strides_storage test_shape_strides_storage.cc)
 add_infini_rt_test(test_owning_tensor_contract
                    test_owning_tensor_contract.cc)
 add_infini_rt_test(test_owning_tensor test_owning_tensor.cc)
+add_infini_rt_test(test_tensor_allocator test_tensor_allocator.cc)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_infini_rt_test(test_tensor_view_allocations
                        test_tensor_view_allocations.cc)

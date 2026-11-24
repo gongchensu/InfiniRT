@@ -90,3 +90,15 @@ infini::rt::TensorView tensor{
 - metadata、data pointer 和 storage 生命周期访问。
 
 视图操作共享底层 `Memory`，不复制元素数据。RT 当前不通过 Ops 提供填充或拷贝便捷函数；这些计算语义由上层 runtime 或后续 RT-native primitive 提供。
+
+## TensorAllocator
+
+`infini::rt::TensorAllocator` 是张量存储上下文边界。实现方负责：
+
+- 返回与目标设备一致的普通存储；
+- 返回参数物理布局使用的 exact storage;
+- 返回 pinned host storage;
+- 维护 allocation 释放规则和 stream 顺序；
+- 提供 opaque allocation owner token。
+
+RT 只通过该接口构造 `Tensor::empty` 和 `Tensor::strided_empty`，不感知 LM Runtime、Ops 或上层调度对象。
